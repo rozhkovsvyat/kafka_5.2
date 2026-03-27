@@ -1,0 +1,202 @@
+x-kafka:
+  &kafka
+  image: bitnamilegacy/kafka:3.7
+  restart: always
+  environment:
+    &kafka-environment
+    KAFKA_ENABLE_KRAFT: yes
+    KAFKA_KRAFT_CLUSTER_ID: MkU4RDY5OTYtRkU0Ri00I0ZA
+    KAFKA_CFG_PROCESS_ROLES: broker,controller
+    KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka-0:9093,1@kafka-1:9093,2@kafka-2:9093
+    KAFKA_CFG_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+    KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,INTERNAL:SSL,EXTERNAL:SSL"
+    KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
+    # KRaft + StandardAuthorizer: VOTE на CONTROLLER до готовности authorizer — без этого AuthorizerNotReadyException и UNKNOWN_SERVER_ERROR в Raft.
+    KAFKA_CFG_EARLY_START_LISTENERS: CONTROLLER
+
+    KAFKA_TLS_TYPE: jks
+    KAFKA_CERTIFICATE_PASSWORD: sercret123
+    KAFKA_CFG_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+    # Маппинг SSL-principal: из полного DN сертификата (CN=producer,O=Kafka,...) в короткое имя
+    # совпадает с CN в scripts/generate-certs.* — он же указывается в ACL и super.users как User:<имя>.
+    # Синтаксис RULE: RULE:шаблон/замена/ — слэши разделяют поля (не часть regex).
+    # ([^,]+) захватывает только значение CN; $1 в замене подставляет этот кусок, без O=, L= и т.д.
+    # После запятой DEFAULT: если RULE не подошёл — действует стандартное отображение Kafka.
+    # В YAML Compose символ $ зарезервирован: пишем $$ чтобы в брокер ушёл один $ (конец строки в regex и $1).
+    KAFKA_CFG_SSL_PRINCIPAL_MAPPING_RULES: "RULE:^CN=([^,]+).*$$/$$1/,DEFAULT"
+    # ANONYMOUS: Raft/VOTE на CONTROLLER (PLAINTEXT) до готовности StandardAuthorizer; клиенты ходят на INTERNAL/EXTERNAL с SSL+client auth.
+    KAFKA_CFG_SUPER_USERS: User:admin;User:kafka-0;User:kafka-1;User:kafka-2;User:schema-registry;User:kafka-ui;User:ANONYMOUS
+    KAFKA_CFG_LISTENER_NAME_INTERNAL_SSL_CLIENT_AUTH: required
+    KAFKA_CFG_LISTENER_NAME_EXTERNAL_SSL_CLIENT_AUTH: required
+
+services:
+  kafka-0:
+    <<: *kafka
+    ports: ["9094:9094"]
+    environment:
+      <<: *kafka-environment
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka-0:9092,EXTERNAL://127.0.0.1:9094
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9092' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./secrets/0:/bitnami/kafka/config/certs:ro
+      - kafka_0_data:/bitnami/kafka
+
+  kafka-1:
+    <<: *kafka
+    ports: ["9095:9094"]
+    environment:
+      <<: *kafka-environment
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka-1:9092,EXTERNAL://127.0.0.1:9095
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9092' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./secrets/1:/bitnami/kafka/config/certs:ro
+      - kafka_1_data:/bitnami/kafka
+
+  kafka-2:
+    <<: *kafka
+    ports: ["9096:9094"]
+    environment:
+      <<: *kafka-environment
+      KAFKA_CFG_NODE_ID: 2
+      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka-2:9092,EXTERNAL://127.0.0.1:9096
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9092' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./secrets/2:/bitnami/kafka/config/certs:ro
+      - kafka_2_data:/bitnami/kafka
+
+  schema-registry:
+    image: bitnamilegacy/schema-registry:7.6
+    restart: always
+    ports:
+      - "8081:8081"
+    volumes:
+      # bitnamilegacy 7.6: libschemaregistry.sh задаёт kafkastore.ssl.* только при наличии
+      # schema-registry.keystore.jks и schema-registry.truststore.jks (не kafka.* / ssl.*).
+      - ./secrets/kafka.truststore.jks:/opt/bitnami/schema-registry/certs/schema-registry.truststore.jks:ro
+      - ./secrets/clients/schema-registry.keystore.jks:/opt/bitnami/schema-registry/certs/schema-registry.keystore.jks:ro
+    depends_on:
+      kafka-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8081' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKA_BROKERS: SSL://kafka-0:9092,SSL://kafka-1:9092,SSL://kafka-2:9092
+      SCHEMA_REGISTRY_KAFKA_TRUSTSTORE_PASSWORD: sercret123
+      SCHEMA_REGISTRY_KAFKA_KEYSTORE_PASSWORD: sercret123
+      SCHEMA_REGISTRY_KAFKA_KEY_PASSWORD: sercret123
+      SCHEMA_REGISTRY_KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+
+  ui:
+    image: provectuslabs/kafka-ui:v0.7.0
+    restart: always
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./secrets:/certs:ro
+    depends_on:
+      schema-registry:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092,kafka-2:9092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+      KAFKA_CLUSTERS_0_NAME: kraft
+      KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: SSL
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_TRUSTSTORE_LOCATION: /certs/kafka.truststore.jks
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_TRUSTSTORE_PASSWORD: sercret123
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_KEYSTORE_LOCATION: /certs/clients/kafka-ui.keystore.jks
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_KEYSTORE_PASSWORD: sercret123
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_KEY_PASSWORD: sercret123
+
+  kafka-init:
+    image: bitnamilegacy/kafka:3.7
+    restart: "no"
+    depends_on:
+      kafka-2:
+        condition: service_healthy
+    volumes:
+      - ./secrets:/certs:ro
+    environment:
+      - KAFKA_TLS_TYPE=jks
+      - KAFKA_CERTIFICATE_PASSWORD=sercret123
+      - KAFKA_OPTS=-Dkafka.ssl.endpoint.identification.algorithm=
+    command:
+      - bash
+      - -c
+      - |
+        cat <<EOF > /tmp/admin.properties
+        security.protocol=SSL
+        ssl.truststore.location=/certs/kafka.truststore.jks
+        ssl.truststore.password=sercret123
+        ssl.keystore.location=/certs/clients/admin.keystore.jks
+        ssl.keystore.password=sercret123
+        ssl.key.password=sercret123
+        EOF
+
+        echo 'Waiting for Kafka to start ACL configuration...'
+        sleep 15
+
+        kafka-topics.sh --bootstrap-server kafka-0:9092 --command-config /tmp/admin.properties --create --if-not-exists --topic topic-1 --partitions 3 --replication-factor 3
+        kafka-topics.sh --bootstrap-server kafka-0:9092 --command-config /tmp/admin.properties --create --if-not-exists --topic topic-2 --partitions 3 --replication-factor 3
+
+        kafka-acls.sh --bootstrap-server kafka-0:9092 --command-config /tmp/admin.properties --add --allow-principal User:producer --operation Describe --cluster
+        kafka-acls.sh --bootstrap-server kafka-0:9092 --command-config /tmp/admin.properties --add --allow-principal User:producer --operation IdempotentWrite --cluster
+        kafka-acls.sh --bootstrap-server kafka-0:9092 --command-config /tmp/admin.properties --add --allow-principal User:consumer --operation Describe --cluster
+
+        kafka-acls.sh --bootstrap-server kafka-0:9092 --command-config /tmp/admin.properties --add --allow-principal User:producer --operation Write --topic topic-1
+        kafka-acls.sh --bootstrap-server kafka-0:9092 --command-config /tmp/admin.properties --add --allow-principal User:producer --operation Describe --topic topic-1
+        kafka-acls.sh --bootstrap-server kafka-0:9092 --command-config /tmp/admin.properties --add --allow-principal User:consumer --operation Read --operation Describe --topic topic-1 --group '*'
+        kafka-acls.sh --bootstrap-server kafka-0:9092 --command-config /tmp/admin.properties --add --allow-principal User:producer --operation Write --topic topic-2
+        kafka-acls.sh --bootstrap-server kafka-0:9092 --command-config /tmp/admin.properties --add --allow-principal User:producer --operation Describe --topic topic-2
+
+        echo 'ACL configuration applied!'
+
+  kafka-client:
+    build:
+      context: ./kafka-client
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      kafka-0:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092,kafka-2:9092
+      APP_KAFKA_TOPICS_ONE: topic-1
+      APP_KAFKA_TOPICS_TWO: topic-2
+      APP_KAFKA_CONSUMER_GROUP_ID: kafka-ssl-client
+      SSL_TRUSTSTORE: file:/certs/kafka.truststore.jks
+      SSL_PRODUCER_KEYSTORE: file:/certs/clients/producer.keystore.jks
+      SSL_CONSUMER_KEYSTORE: file:/certs/clients/consumer.keystore.jks
+      SSL_KEYSTORE_PASSWORD: sercret123
+    volumes:
+      - ./secrets:/certs:ro
+
+volumes:
+  kafka_0_data:
+  kafka_1_data:
+  kafka_2_data:

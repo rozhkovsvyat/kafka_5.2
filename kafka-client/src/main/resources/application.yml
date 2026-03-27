@@ -1,0 +1,79 @@
+app:
+  kafka:
+    topics:
+      one: ${APP_KAFKA_TOPICS_ONE:topic-1}
+      two: ${APP_KAFKA_TOPICS_TWO:topic-2}
+    # Ожидание кластера перед сценарием (AdminClient.describeCluster).
+    cluster-wait:
+      timeout: ${APP_KAFKA_CLUSTER_WAIT_TIMEOUT:60s}
+      poll-interval: ${APP_KAFKA_CLUSTER_WAIT_POLL:500ms}
+    consumer-group-id: ${APP_KAFKA_CONSUMER_GROUP_ID:kafka-ssl-client}
+
+spring:
+  application:
+    name: kafka-client
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9094,localhost:9095,localhost:9096}
+    properties:
+      security.protocol: SSL
+      ssl.endpoint.identification.algorithm: ""
+    # Общий SSL: нужен и truststore, и keystore — иначе AdminClient (SslRunner) без клиентского
+    # сертификата получает bad_certificate при INTERNAL SSL + ssl.client.auth=required.
+    ssl:
+      trust-store-type: JKS
+      trust-store-password: ${SSL_KEYSTORE_PASSWORD:sercret123}
+      trust-store-location: ${SSL_TRUSTSTORE:file:../secrets/kafka.truststore.jks}
+      key-store-type: JKS
+      key-store-location: ${SSL_ADMIN_KEYSTORE:${SSL_PRODUCER_KEYSTORE:file:../secrets/clients/producer.keystore.jks}}
+      key-store-password: ${SSL_KEYSTORE_PASSWORD:sercret123}
+      key-password: ${SSL_KEYSTORE_PASSWORD:sercret123}
+    consumer:
+      group-id: ${app.kafka.consumer-group-id}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      ssl:
+        trust-store-type: JKS
+        trust-store-location: ${SSL_TRUSTSTORE:file:../secrets/kafka.truststore.jks}
+        trust-store-password: ${SSL_KEYSTORE_PASSWORD:sercret123}
+        key-store-type: JKS
+        key-store-location: ${SSL_CONSUMER_KEYSTORE:file:../secrets/clients/consumer.keystore.jks}
+        key-store-password: ${SSL_KEYSTORE_PASSWORD:sercret123}
+        key-password: ${SSL_KEYSTORE_PASSWORD:sercret123}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      ssl:
+        trust-store-type: JKS
+        trust-store-location: ${SSL_TRUSTSTORE:file:../secrets/kafka.truststore.jks}
+        trust-store-password: ${SSL_KEYSTORE_PASSWORD:sercret123}
+        key-store-type: JKS
+        key-store-location: ${SSL_PRODUCER_KEYSTORE:file:../secrets/clients/producer.keystore.jks}
+        key-store-password: ${SSL_KEYSTORE_PASSWORD:sercret123}
+        key-password: ${SSL_KEYSTORE_PASSWORD:sercret123}
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when_authorized
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+logging:
+  level:
+    org.apache.kafka: WARN
+    com.work: INFO

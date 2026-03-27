@@ -1,0 +1,72 @@
+# =============================================================================
+# Kafka / Docker — TLS и ключи (генерация: scripts/generate-certs.sh | .ps1)
+# =============================================================================
+secrets/**/*.jks
+secrets/**/*.p12
+secrets/**/*.pem
+secrets/**/*.csr
+secrets/**/*.crt
+
+/*.jks
+/*.p12
+/*.pem
+/*.csr
+/*.crt
+
+.env
+.env.*
+!.env.example
+
+# =============================================================================
+# Java / Maven / Spring Boot
+# =============================================================================
+**/target/
+**/pom.xml.tag
+**/pom.xml.releaseBackup
+**/pom.xml.versionsBackup
+**/pom.xml.next
+**/release.properties
+**/dependency-reduced-pom.xml
+**/.flattened-pom.xml
+
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+
+# Локальные профили Spring (пароли, bootstrap-серверы)
+**/application-local.yml
+**/application-local.yaml
+**/application-local.properties
+**/application-*-local.yml
+**/application-*-local.yaml
+**/application-*-local.properties
+
+# =============================================================================
+# IDE и редакторы
+# =============================================================================
+.idea/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.factorypath
+.settings/
+.sts4-cache/
+*.code-workspace
+.vscode/
+
+# =============================================================================
+# ОС и прочее
+# =============================================================================
+.DS_Store
+Thumbs.db
+*.log
+logs/
+*.tmp
+*.bak
+*~
